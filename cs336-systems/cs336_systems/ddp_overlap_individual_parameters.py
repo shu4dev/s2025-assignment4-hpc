@@ -2,7 +2,6 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-
 class DDP:
     def __init__(self, module: torch.nn.Module):
         self.module = module

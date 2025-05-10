@@ -1,12 +1,6 @@
 import torch, triton
 import triton.language as tl
 
-def _sum_all_but_last(x: torch.Tensor) -> torch.Tensor:
-    if len(x.shape) == 1:
-        return x
-    else:
-        return x.sum(dim=tuple(range(len(x.shape)-1)), keepdim=True)
-    
 @triton.jit
 def _rms_fwd(
     x_ptr,
@@ -16,23 +10,16 @@ def _rms_fwd(
     eps,        
     BLOCK_SIZE: tl.constexpr
     ):
-    # setup pointers
     row_idx = tl.program_id(0)
     row_start_ptr = x_ptr + row_idx * H
     offsets = tl.arange(0, BLOCK_SIZE)
     x_ptrs = row_start_ptr + offsets
     weight_ptrs = weight_ptr + offsets
-
-    # load in data
     mask = offsets < H
     row = tl.load(x_ptrs, mask=mask, other=0)
     weight = tl.load(weight_ptrs, mask=mask, other=0)
-
-    # compute
     norm = tl.sqrt(tl.sum(row*row)/H + eps)
     output = row/norm*weight
-
-    # write back
     output_start_ptr = output_ptr + row_idx * H
     output_ptrs = output_start_ptr + offsets
     tl.store(output_ptrs, output, mask=mask)
@@ -49,39 +36,27 @@ def _rms_bwd(
         BLOCK_SIZE: tl.constexpr):
 
     row_idx = tl.program_id(0)
-    # setup input pointers
     x_start_ptr = x_ptr + row_idx * H
     grad_out_start_ptr = grad_out_ptr + row_idx * H
-
     offsets = tl.arange(0, BLOCK_SIZE)
     x_ptrs = x_start_ptr + offsets
     g_ptrs = g_ptr + offsets
     grad_out_ptrs = grad_out_start_ptr + offsets
-
-    # load in data
     mask = offsets < H
     x = tl.load(x_ptrs, mask=mask, other=0)
     g = tl.load(g_ptrs, mask=mask, other=0)
     grad_out = tl.load(grad_out_ptrs, mask=mask, other=0)
-
-    # pre compute
     A = tl.sqrt(tl.sum(x*x)/H + eps)
-
-    # compute grad_g
     g_grad = grad_out*(x/A)
-
-    # compute grad_x
     part1 = grad_out * g / A  
     part2 = x/(H*A*A*A) * tl.sum(grad_out * x * g)
     x_grad = part1-part2
-
-    # write back g
     grad_g_start_ptr = grad_g_ptr + row_idx * H
     tl.store(grad_g_start_ptr + offsets, g_grad, mask=mask)
-
-    # write back x
     grad_x_start_ptr = grad_x_ptr + row_idx * H
     tl.store(grad_x_start_ptr + offsets, x_grad, mask=mask)
+
+
 class RMSNormPyTorchFunc(torch.autograd.Function):
     def _jvp_g(grad_output: torch.Tensor, x: torch.Tensor, g: torch.Tensor):
         mean_square = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + 1e-5)
@@ -116,6 +91,12 @@ class RMSNormPyTorchFunc(torch.autograd.Function):
         grad_x = RMSNormPyTorchFunc._jvp_x(grad_out, x, g)
         grad_g = RMSNormPyTorchFunc._jvp_g(grad_out, x, g)
         return grad_x, grad_g
+    
+def _sum_all_but_last(x: torch.Tensor) -> torch.Tensor:
+    if len(x.shape) == 1:
+        return x
+    else:
+        return x.sum(dim=tuple(range(len(x.shape)-1)), keepdim=True)
 
 class RMSNormTritonFunc(torch.autograd.Function):
     eps = 1e-5

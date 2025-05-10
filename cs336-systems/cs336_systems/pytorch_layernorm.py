@@ -3,7 +3,7 @@ import torch, time
 from cs336_basics.model import RMSNorm
 from cs336_systems.rmsnorm import RMSNormTriton
 import torch.nn as nn
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"   # force synchronous errors
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 rows = 50000
 last_dims = [1024, 2048, 4096, 8192]
 passes = 1000
